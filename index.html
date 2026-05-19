@@ -1351,25 +1351,72 @@ async function downloadPDF() {
     const docElement = document.getElementById('quote-doc');
     if (!docElement) throw new Error('Quote preview document element not found');
 
-    // Temporarily remove any transform (scale) from the preview element
+    // Temporarily reset transform so html2canvas captures the full, un-scaled doc
     const originalTransform = docElement.style.transform;
     docElement.style.transform = 'none';
 
-    // Render the preview to a canvas using html2canvas
+    // Ensure logo base64 is available (may not be ready if download clicked very quickly)
+    if (!window._logoB64) {
+      try {
+        window._logoB64 = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          fetch('strikelogo_white.png').then(res => res.blob()).then(blob => {
+            r.onload = e => resolve(e.target.result);
+            r.onerror = reject;
+            r.readAsDataURL(blob);
+          }).catch(reject);
+        });
+      } catch { /* will capture without logo swap */ }
+    }
+
+    // Swap all <img> srcs to base64 to prevent canvas tainting (CORS)
+    const imgs = Array.from(docElement.querySelectorAll('img'));
+    const originalSrcs = imgs.map(img => img.src);
+    if (window._logoB64) imgs.forEach(img => { img.src = window._logoB64; });
+
+    // Small delay to let the browser paint the swapped images
+    await new Promise(r => setTimeout(r, 80));
+
+    // Capture the full document at high DPI
     const canvas = await html2canvas(docElement, {
-      scale: 3, // Render at 3x scale for crisp print quality
-      useCORS: true,
-      allowTaint: true,
+      scale: 2,
+      useCORS: false,
+      allowTaint: false,
       backgroundColor: '#ffffff',
-      logging: false
+      logging: false,
+      width: 595,
+      windowWidth: 595
     });
 
-    // Re-apply scale transform using scalePreview helper
+    // Restore original image srcs
+    imgs.forEach((img, i) => { img.src = originalSrcs[i]; });
+
+    // Restore scale
+    docElement.style.transform = originalTransform;
     scalePreview();
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const imgData = canvas.toDataURL('image/jpeg', 0.92);
 
     const { jsPDF } = window.jspdf;
+
+    const ptWidth  = 595.28;  // A4 width in pt
+    const ptHeight = 841.89;  // A4 height in pt
+
+    // Natural height if drawn at full A4 width
+    const naturalHeightPt = (canvas.height / canvas.width) * ptWidth;
+
+    // Scale-to-fit: shrink proportionally if content exceeds one page
+    let renderW = ptWidth;
+    let renderH = naturalHeightPt;
+    if (renderH > ptHeight) {
+      const ratio = ptHeight / renderH;
+      renderW = ptWidth * ratio;
+      renderH = ptHeight;
+    }
+
+    // Center horizontally if we had to scale down
+    const xOff = (ptWidth - renderW) / 2;
+
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'pt',
@@ -1377,29 +1424,14 @@ async function downloadPDF() {
       compress: true
     });
 
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-
-    // Draw the high-DPI image perfectly to cover the A4 page
-    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+    pdf.addImage(imgData, 'JPEG', xOff, 0, renderW, renderH, undefined, 'FAST');
 
     const safeName = (state.client.organization || state.program.name || 'strike')
       .replace(/[^a-z0-9]+/gi, '-').toLowerCase();
     const num = (state.quote.number || 'quote').replace(/[^a-z0-9-]/gi, '');
 
-    // Robust, browser-independent programmatic download flow
-    const blob = pdf.output('blob');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `STRIKE_${num}_${safeName}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
+    // pdf.save() triggers a proper named download — no blob URL needed
+    pdf.save(`STRIKE_${num}_${safeName}.pdf`);
 
     showToast('PDF Downloaded');
   } catch (err) {
@@ -1839,13 +1871,16 @@ function showToast(msg) {
    INIT
 ═══════════════════════════════════════════ */
 async function init() {
-  // Preload logo as base64 for jsPDF
+  // Preload logo as base64 for jsPDF (awaited so it's ready before any download)
   try {
-    const resp = await fetch('strikelogo_white.png');
-    const blob = await resp.blob();
-    const reader = new FileReader();
-    reader.onload = e => { window._logoB64 = e.target.result; };
-    reader.readAsDataURL(blob);
+    window._logoB64 = await new Promise((resolve, reject) => {
+      fetch('strikelogo_white.png').then(res => res.blob()).then(blob => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      }).catch(reject);
+    });
   } catch {}
 
   // Run backward compatible migrations
