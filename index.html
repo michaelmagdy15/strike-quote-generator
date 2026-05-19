@@ -582,9 +582,29 @@
       <div>
         <label>Type</label>
         <select id="f-quote-type">
-          <option value="sports">Sports Program</option>
-          <option value="event">Event</option>
-          <option value="corporate">Corporate Event</option>
+          <option value="Sports Program">Sports Program</option>
+          <option value="Discount Voucher Deals">Discount Voucher Deals</option>
+          <option value="Corporate Wellness">Corporate Wellness</option>
+          <option value="Sports Events">Sports Events</option>
+          <option value="Team Building">Team Building</option>
+          <option value="Compound Activations">Compound Activations</option>
+          <option value="School Programs">School Programs</option>
+          <option value="Kids Programs">Kids Programs</option>
+          <option value="Juniors Programs">Juniors Programs</option>
+          <option value="Self-Defense Workshops">Self-Defense Workshops</option>
+          <option value="Private Group Training">Private Group Training</option>
+          <option value="University Activations">University Activations</option>
+          <option value="Brand Activations">Brand Activations</option>
+          <option value="Ramadan Programs">Ramadan Programs</option>
+          <option value="Partnership Deals">Partnership Deals</option>
+          <option value="Sponsorship Proposals">Sponsorship Proposals</option>
+          <option value="Fighter Programs">Fighter Programs</option>
+          <option value="Advanced Training Programs">Advanced Training Programs</option>
+          <option value="Event Management">Event Management</option>
+          <option value="Coaching Services">Coaching Services</option>
+          <option value="Wellness Programs">Wellness Programs</option>
+          <option value="Corporate Event">Corporate Event</option>
+          <option value="Event">Event</option>
         </select>
       </div>
     </div>
@@ -717,7 +737,7 @@
           <input id="f-footer-tag2" placeholder="Inside & Outside The Ring.">
         </div>
         <div class="field-full">
-          <label>Signature Name / Contact</label>
+          <label>Contact Details</label>
           <input id="f-footer-founder" placeholder="Shady Youssef">
         </div>
       </div>
@@ -763,7 +783,7 @@
 const newId = () => Math.random().toString(36).slice(2, 8);
 
 const state = {
-  quote: { number: '', date: today(), valid: plusDays(30) },
+  quote: { number: '', date: today(), valid: plusDays(30), type: 'Sports Program' },
   program: {
     name: 'Kids Boxing & Fitness Program',
     description: 'A safe, fun and professional training program designed to build stronger kids — physically, mentally and socially.',
@@ -1241,12 +1261,15 @@ function renderPreview() {
     </div>
   `).join('');
 
+  const quoteTypeLabel = s.quote.type || 'Quotation';
+
   el.innerHTML = `
     <div class="doc-header">
       <div class="doc-logo"><img src="strikelogo_white.png" alt="STRIKE"></div>
       <div class="doc-logo-bar"></div>
       <div class="doc-meta-top">
         <div class="doc-meta-num">${esc(s.quote.number || 'STR-2026-—')}</div>
+        <div style="color:#fff;font-weight:600;">${esc(quoteTypeLabel).toUpperCase()}</div>
         <div>Issued · ${fmtDate(s.quote.date)}</div>
         <div>Valid · ${fmtDate(s.quote.valid)}</div>
       </div>
@@ -1261,6 +1284,7 @@ function renderPreview() {
       </div>
       ${s.program.description ? `<div class="doc-tagline">${esc(s.program.description)}</div>` : ''}
       ${recipient ? `<div class="doc-recipient">Prepared for: <span>${esc(recipient)}</span></div>` : ''}
+      ${s.client.email ? `<div style="font-family:var(--mono);font-size:8px;color:#888;margin-top:4px;">${esc(s.client.email)}</div>` : ''}
     </div>
 
     <div class="doc-stats">
@@ -1309,7 +1333,7 @@ function renderPreview() {
       </div>
       ${s.footer.founder ? `
         <div class="doc-founder">
-          Founder / Contact<br><span>${esc(s.footer.founder)}</span>
+          Contact Details<br><span>${esc(s.footer.founder)}</span>
         </div>
       ` : ''}
     </div>
@@ -1402,20 +1426,8 @@ async function downloadPDF() {
     const ptWidth  = 595.28;  // A4 width in pt
     const ptHeight = 841.89;  // A4 height in pt
 
-    // Natural height if drawn at full A4 width
+    // Full height proportional to canvas aspect ratio
     const naturalHeightPt = (canvas.height / canvas.width) * ptWidth;
-
-    // Scale-to-fit: shrink proportionally if content exceeds one page
-    let renderW = ptWidth;
-    let renderH = naturalHeightPt;
-    if (renderH > ptHeight) {
-      const ratio = ptHeight / renderH;
-      renderW = ptWidth * ratio;
-      renderH = ptHeight;
-    }
-
-    // Center horizontally if we had to scale down
-    const xOff = (ptWidth - renderW) / 2;
 
     const pdf = new jsPDF({
       orientation: 'portrait',
@@ -1424,7 +1436,35 @@ async function downloadPDF() {
       compress: true
     });
 
-    pdf.addImage(imgData, 'JPEG', xOff, 0, renderW, renderH, undefined, 'FAST');
+    // --- Smart page breaks: snap cuts to section boundaries ---
+    const pxToPt = naturalHeightPt / docElement.scrollHeight;
+    const sections = Array.from(docElement.querySelectorAll(
+      '.doc-header, .doc-title-block, .doc-stats, .doc-session-box, ' +
+      '.doc-section, .doc-packages, .doc-notes, .doc-footer'
+    ));
+    // Bottom edge of each section in pt
+    const sectionEdgesPt = sections
+      .map(el => (el.offsetTop + el.offsetHeight) * pxToPt)
+      .sort((a, b) => a - b);
+
+    // Build page start positions
+    const pageStarts = [0];
+    let pageEnd = ptHeight;
+    while (pageEnd < naturalHeightPt) {
+      // Find the last section bottom that fits within this page budget
+      let safeCut = pageEnd; // fallback: hard cut
+      for (let i = sectionEdgesPt.length - 1; i >= 0; i--) {
+        if (sectionEdgesPt[i] <= pageEnd) { safeCut = sectionEdgesPt[i]; break; }
+      }
+      pageStarts.push(safeCut);
+      pageEnd = safeCut + ptHeight;
+    }
+
+    // Render each page by shifting the full image
+    for (let i = 0; i < pageStarts.length; i++) {
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, -pageStarts[i], ptWidth, naturalHeightPt, undefined, 'FAST');
+    }
 
     const safeName = (state.client.organization || state.program.name || 'strike')
       .replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -1735,10 +1775,10 @@ function drawPDF(pdf) {
   pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10); pdf.setTextColor(...gold);
   pdf.text((state.footer.tagline2 || '').toUpperCase(), ML + 112, footerY + 38);
 
-  // Founder / Signature from state
+  // Contact Details from state
   if (state.footer.founder) {
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(160, 160, 160);
-    pdf.text('FOUNDER / CONTACT:', W - MR, footerY + 22, { align: 'right' });
+    pdf.text('CONTACT DETAILS:', W - MR, footerY + 22, { align: 'right' });
     pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...white);
     pdf.text(state.footer.founder.toUpperCase(), W - MR, footerY + 34, { align: 'right' });
   }
@@ -1809,6 +1849,7 @@ function syncForm() {
   setVal('f-quote-num',    s.quote.number);
   setVal('f-date',         s.quote.date);
   setVal('f-valid',        s.quote.valid);
+  setVal('f-quote-type',   s.quote.type || 'Sports Program');
   
   // Pricing
   setVal('f-currency',     s.pricing.currency);
@@ -1844,6 +1885,7 @@ function wireForm() {
   bind('f-quote-num',    v => state.quote.number = v);
   bind('f-date',         v => state.quote.date = v);
   bind('f-valid',        v => state.quote.valid = v);
+  bindSelect('f-quote-type', v => state.quote.type = v);
   
   // Pricing Settings
   bind('f-currency',     v => { state.pricing.currency = v; renderDurations(); });
